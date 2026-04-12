@@ -35,7 +35,7 @@ app.get("/", (req, res) => {
   res.json({
     status: "ok",
     service: "fitness-tracker-backend",
-    message: "Backend is running. Use /api/health for health checks.",
+    message: "Backend is running on Firebase Functions. Use /api/health for health checks.",
     timestamp: new Date().toISOString(),
   });
 });

@@ -18,7 +18,9 @@
     "start": "npm run start --workspace backend",
     "start:frontend": "npm run preview --workspace frontend",
     "deploy:frontend": "npm run build --workspace frontend && npx firebase-tools deploy --only hosting",
-    "deploy:firestore": "npx firebase-tools deploy --only firestore"
+    "deploy:firestore": "npx firebase-tools deploy --only firestore",
+    "deploy:functions": "npx firebase-tools deploy --only functions",
+    "deploy:firebase": "npm run build --workspace frontend && npx firebase-tools deploy --only functions,hosting,firestore"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"
