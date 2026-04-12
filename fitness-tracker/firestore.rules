@@ -1,0 +1,107 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function hasGymSubscription() {
+      let profile = get(/databases/$(database)/documents/users/$(request.auth.uid));
+      return isSignedIn()
+        && profile.data != null
+        && profile.data.subscriptionPlan in ["monthly", "yearly"]
+        && profile.data.subscriptionExpiresAt is timestamp
+        && profile.data.subscriptionExpiresAt > request.time;
+    }
+
+    function validUserDoc(data) {
+      return data.name is string
+        && data.email is string
+        && data.goal is string
+        && data.weightUnit is string
+        && data.measureUnit is string
+        && data.accent is string
+        && data.goalWeight is string
+        && data.age is string
+        && data.height is string
+        && (!("subscriptionPlan" in data) || data.subscriptionPlan in ["none", "monthly", "yearly"])
+        && (!("subscriptionEndDate" in data) || data.subscriptionEndDate is string)
+        && (!("subscriptionExpiresAt" in data) || data.subscriptionExpiresAt is timestamp || data.subscriptionExpiresAt == null);
+    }
+
+    function validWeightDoc(data) {
+      return data.uid is string
+        && data.weight is number
+        && data.date is string
+        && (!("note" in data) || data.note is string);
+    }
+
+    function validMeasurementDoc(data) {
+      return data.uid is string
+        && data.part is string
+        && data.val is number
+        && data.date is string;
+    }
+
+    function validWorkoutDoc(data) {
+      return data.uid is string
+        && data.exercise is string
+        && data.sets is number
+        && data.reps is number
+        && data.weight is number
+        && data.muscle is string
+        && data.rpe is number
+        && data.date is string
+        && (!("note" in data) || data.note is string);
+    }
+
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow create, update: if isOwner(uid) && validUserDoc(request.resource.data);
+      allow delete: if isOwner(uid);
+    }
+
+    match /weights/{docId} {
+      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && validWeightDoc(request.resource.data);
+      allow update: if isSignedIn()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && validWeightDoc(request.resource.data);
+      allow delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /measurements/{docId} {
+      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && validMeasurementDoc(request.resource.data);
+      allow update: if isSignedIn()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && validMeasurementDoc(request.resource.data);
+      allow delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /workouts/{docId} {
+      allow read: if isSignedIn() && hasGymSubscription() && resource.data.uid == request.auth.uid;
+      allow create: if isSignedIn()
+        && hasGymSubscription()
+        && request.resource.data.uid == request.auth.uid
+        && validWorkoutDoc(request.resource.data);
+      allow update: if isSignedIn()
+        && hasGymSubscription()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && validWorkoutDoc(request.resource.data);
+      allow delete: if isSignedIn() && hasGymSubscription() && resource.data.uid == request.auth.uid;
+    }
+  }
+}

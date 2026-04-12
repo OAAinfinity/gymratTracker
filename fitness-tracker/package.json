@@ -1,0 +1,26 @@
+{
+  "name": "fitness-tracker",
+  "private": true,
+  "version": "1.0.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "install:all": "npm install --workspaces",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:frontend": "npm run dev --workspace frontend",
+    "dev:backend": "npm run dev --workspace backend",
+    "build": "npm run build --workspace frontend",
+    "start": "npm run start --workspace backend",
+    "start:frontend": "npm run preview --workspace frontend",
+    "deploy:frontend": "npm run build --workspace frontend && npx firebase-tools deploy --only hosting",
+    "deploy:firestore": "npx firebase-tools deploy --only firestore"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
