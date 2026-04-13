@@ -707,7 +707,17 @@ function GymPage({ settings, setSettings }) {
   const [err,  setErr]  = useState("");
   const [subBusy, setSubBusy] = useState(false);
   const configuredApiBase = (import.meta.env.VITE_API_BASE_URL || "").trim();
-  const apiBase = configuredApiBase || (window.location.hostname === "localhost" ? "http://localhost:4000" : window.location.origin);
+  const normalizeApiBase = (value) => {
+    const trimmed = (value || "").trim();
+    if (!trimmed) return "";
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
+    return `https://${trimmed}`;
+  };
+
+  const apiBase = normalizeApiBase(configuredApiBase)
+    || (window.location.hostname === "localhost"
+      ? "http://localhost:4000"
+      : "https://gymrat-tracker-r7u8.vercel.app");
 
   const buildApiUrl = (path) => {
     const normalizedBase = apiBase.endsWith("/") ? apiBase.slice(0, -1) : apiBase;
