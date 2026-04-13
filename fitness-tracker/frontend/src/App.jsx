@@ -714,15 +714,58 @@ function GymPage({ settings, setSettings }) {
     return `https://${trimmed}`;
   };
 
+  const hardcodedBackendBase = "https://gymrat-tracker-r7u8.vercel.app";
   const apiBase = normalizeApiBase(configuredApiBase)
     || (window.location.hostname === "localhost"
       ? "http://localhost:4000"
-      : "https://gymrat-tracker-r7u8.vercel.app");
+      : hardcodedBackendBase);
 
-  const buildApiUrl = (path) => {
-    const normalizedBase = apiBase.endsWith("/") ? apiBase.slice(0, -1) : apiBase;
+  const apiCandidates = [...new Set([
+    normalizeApiBase(configuredApiBase),
+    apiBase,
+    hardcodedBackendBase,
+  ].filter(Boolean))];
+
+  const buildApiUrl = (path, baseOverride) => {
+    const resolvedBase = baseOverride || apiBase;
+    const normalizedBase = resolvedBase.endsWith("/") ? resolvedBase.slice(0, -1) : resolvedBase;
     const normalizedPath = path.startsWith("/") ? path : `/${path}`;
     return `${normalizedBase}${normalizedPath}`;
+  };
+
+  const postJsonWithApiFallback = async (path, payload) => {
+    let lastErrorMessage = "Unable to connect to payment server";
+
+    for (const base of apiCandidates) {
+      const response = await fetch(buildApiUrl(path, base), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const raw = await response.text();
+      let data = null;
+      try {
+        data = raw ? JSON.parse(raw) : null;
+      } catch {
+        data = null;
+      }
+
+      if (response.ok && data?.status === "ok") {
+        return { data, base };
+      }
+
+      lastErrorMessage = data?.message || `Unable to start payment (${response.status})`;
+
+      // Retry next known API base if this domain does not support this POST route.
+      if (response.status === 404 || response.status === 405) {
+        continue;
+      }
+
+      throw new Error(lastErrorMessage);
+    }
+
+    throw new Error(lastErrorMessage);
   };
 
   const loadRazorpayScript = () =>
@@ -754,29 +797,10 @@ function GymPage({ settings, setSettings }) {
         throw new Error("Razorpay checkout is not available right now. Please refresh and try again.");
       }
 
-      const orderRes = await fetch(buildApiUrl("/api/payments/create-order"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan }),
-      });
-
-      const rawOrderBody = await orderRes.text();
-      let orderData = null;
-      try {
-        orderData = rawOrderBody ? JSON.parse(rawOrderBody) : null;
-      } catch {
-        orderData = null;
-      }
-
-      if (!orderRes.ok || orderData.status !== "ok") {
-        if (orderRes.status === 405) {
-          throw new Error("Unable to start payment (405). VITE_API_BASE_URL is pointing to the wrong domain. Set it to your backend Vercel URL.");
-        }
-        throw new Error(
-          orderData?.message ||
-          `Unable to start payment (${orderRes.status}). Check backend URL and Razorpay keys.`
-        );
-      }
+      const { data: orderData, base: activeApiBase } = await postJsonWithApiFallback(
+        "/api/payments/create-order",
+        { plan }
+      );
 
       if (!orderData?.order?.id || !orderData?.keyId) {
         throw new Error("Payment gateway is not configured correctly. Missing Razorpay order details.");
@@ -796,7 +820,8 @@ function GymPage({ settings, setSettings }) {
         theme: { color: "#f97316" },
         handler: async (paymentResult) => {
           try {
-            const verifyRes = await fetch(buildApiUrl("/api/payments/verify"), {
+            const verifyUrl = buildApiUrl("/api/payments/verify", activeApiBase);
+            const verifyRes = await fetch(verifyUrl, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ ...paymentResult, plan }),
@@ -810,7 +835,7 @@ function GymPage({ settings, setSettings }) {
               verifyData = null;
             }
 
-            if (!verifyRes.ok || verifyData.status !== "ok" || !verifyData.verified) {
+            if (!verifyRes.ok || verifyData?.status !== "ok" || !verifyData?.verified) {
               throw new Error(verifyData?.message || "Payment verification failed");
             }
 
