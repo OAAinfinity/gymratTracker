@@ -346,7 +346,7 @@ function AuthPage() {
         <div className="text-center mb-10">
           <div className="inline-flex items-center gap-3 mb-2">
             <div className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-lg" style={{background:"#f97316"}}>F</div>
-            <span className="font-black text-3xl tracking-[0.15em] text-white" style={{fontFamily:"'Bebas Neue',cursive"}}>FITCORE</span>
+            <span className="font-black text-3xl tracking-[0.15em] text-white" style={{fontFamily:"'Bebas Neue',cursive"}}>GYMRATTRACKER</span>
           </div>
           <p className="text-white/30 text-xs font-mono tracking-widest">PERSONAL FITNESS TRACKER</p>
         </div>
@@ -810,7 +810,7 @@ function GymPage({ settings, setSettings }) {
         key: orderData.keyId,
         amount: orderData.order.amount,
         currency: orderData.order.currency,
-        name: "GymRat Tracker",
+        name: "GymRatTracker",
         description: `${plan === "monthly" ? "Monthly" : "Yearly"} Gym Membership`,
         order_id: orderData.order.id,
         prefill: {
@@ -1239,7 +1239,7 @@ function AppShell() {
       <div className="md:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 py-3"
         style={{background:"rgba(13,13,13,0.95)",borderBottom:"1px solid rgba(255,255,255,0.07)",backdropFilter:"blur(12px)"}}>
         <button className="text-2xl" onClick={()=>setOpen(s=>!s)}>☰</button>
-        <span className="font-black tracking-widest text-sm" style={{fontFamily:"'Bebas Neue',cursive",color:accent}}>FITCORE</span>
+        <span className="font-black tracking-widest text-sm" style={{fontFamily:"'Bebas Neue',cursive",color:accent}}>GYMRATTRACKER</span>
         <div className="w-8"/>
       </div>
 
@@ -1249,7 +1249,7 @@ function AppShell() {
           <div className="px-6 py-8">
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-black" style={{background:accent}}>F</div>
-              <span className="font-black tracking-[0.2em]" style={{fontFamily:"'Bebas Neue',cursive",fontSize:"1.1rem"}}>FITCORE</span>
+              <span className="font-black tracking-[0.2em]" style={{fontFamily:"'Bebas Neue',cursive",fontSize:"1.1rem"}}>GYMRATTRACKER</span>
             </div>
             <p className="text-[10px] font-mono text-white/25 mt-1 tracking-widest">PERSONAL TRACKER</p>
           </div>
