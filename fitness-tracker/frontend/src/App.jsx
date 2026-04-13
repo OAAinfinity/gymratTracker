@@ -759,6 +759,9 @@ function GymPage({ settings, setSettings }) {
       }
 
       if (!orderRes.ok || orderData.status !== "ok") {
+        if (orderRes.status === 405) {
+          throw new Error("Unable to start payment (405). VITE_API_BASE_URL is pointing to the wrong domain. Set it to your backend Vercel URL.");
+        }
         throw new Error(
           orderData?.message ||
           `Unable to start payment (${orderRes.status}). Check backend URL and Razorpay keys.`
