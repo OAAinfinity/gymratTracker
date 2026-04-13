@@ -143,6 +143,20 @@ Set frontend environment variables:
 
 Redeploy frontend after setting variables.
 
+### 7.2.1 Razorpay setup for Gym membership
+
+Backend environment variables:
+
+- `RAZORPAY_KEY_ID`
+- `RAZORPAY_KEY_SECRET`
+
+Backend payment endpoints:
+
+- `POST /api/payments/create-order`
+- `POST /api/payments/verify`
+
+Frontend calls these endpoints and updates subscription only after successful signature verification.
+
 ### 7.3 Final Wiring
 
 1. Copy frontend production domain from Vercel.

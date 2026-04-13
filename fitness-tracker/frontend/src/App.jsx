@@ -706,18 +706,135 @@ function GymPage({ settings, setSettings }) {
   const [busy, setBusy] = useState(false);
   const [err,  setErr]  = useState("");
   const [subBusy, setSubBusy] = useState(false);
+  const configuredApiBase = (import.meta.env.VITE_API_BASE_URL || "").trim();
+  const apiBase = configuredApiBase || (window.location.hostname === "localhost" ? "http://localhost:4000" : window.location.origin);
+
+  const buildApiUrl = (path) => {
+    const normalizedBase = apiBase.endsWith("/") ? apiBase.slice(0, -1) : apiBase;
+    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+    return `${normalizedBase}${normalizedPath}`;
+  };
+
+  const loadRazorpayScript = () =>
+    new Promise((resolve, reject) => {
+      if (window.Razorpay) {
+        resolve(window.Razorpay);
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.async = true;
+      script.onload = () => resolve(window.Razorpay);
+      script.onerror = () => reject(new Error("Failed to load Razorpay checkout script"));
+      document.body.appendChild(script);
+    });
 
   const activatePlan = async (plan) => {
-    const days = plan === "monthly" ? 30 : 365;
-    const payload = {
-      subscriptionPlan: plan,
-      subscriptionEndDate: addDaysISO(days),
-      subscriptionExpiresAt: addDaysDate(days),
-    };
+    setErr("");
     setSubBusy(true);
+
     try {
-      await saveProfile(payload);
-      setSettings(s => ({ ...s, ...payload }));
+      if (!user?.uid) {
+        throw new Error("Please sign in before starting membership payment.");
+      }
+
+      const RazorpayCtor = await loadRazorpayScript();
+      if (!RazorpayCtor) {
+        throw new Error("Razorpay checkout is not available right now. Please refresh and try again.");
+      }
+
+      const orderRes = await fetch(buildApiUrl("/api/payments/create-order"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan }),
+      });
+
+      const rawOrderBody = await orderRes.text();
+      let orderData = null;
+      try {
+        orderData = rawOrderBody ? JSON.parse(rawOrderBody) : null;
+      } catch {
+        orderData = null;
+      }
+
+      if (!orderRes.ok || orderData.status !== "ok") {
+        throw new Error(
+          orderData?.message ||
+          `Unable to start payment (${orderRes.status}). Check backend URL and Razorpay keys.`
+        );
+      }
+
+      if (!orderData?.order?.id || !orderData?.keyId) {
+        throw new Error("Payment gateway is not configured correctly. Missing Razorpay order details.");
+      }
+
+      const options = {
+        key: orderData.keyId,
+        amount: orderData.order.amount,
+        currency: orderData.order.currency,
+        name: "GymRat Tracker",
+        description: `${plan === "monthly" ? "Monthly" : "Yearly"} Gym Membership`,
+        order_id: orderData.order.id,
+        prefill: {
+          name: user?.displayName || "",
+          email: user?.email || "",
+        },
+        theme: { color: "#f97316" },
+        handler: async (paymentResult) => {
+          try {
+            const verifyRes = await fetch(buildApiUrl("/api/payments/verify"), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ...paymentResult, plan }),
+            });
+
+            const rawVerifyBody = await verifyRes.text();
+            let verifyData = null;
+            try {
+              verifyData = rawVerifyBody ? JSON.parse(rawVerifyBody) : null;
+            } catch {
+              verifyData = null;
+            }
+
+            if (!verifyRes.ok || verifyData.status !== "ok" || !verifyData.verified) {
+              throw new Error(verifyData?.message || "Payment verification failed");
+            }
+
+            const profileUpdate = {
+              name: settings?.name || user?.displayName || "",
+              email: user?.email || "",
+              goal: settings?.goal || "Fat Loss",
+              weightUnit: settings?.weightUnit || "kg",
+              measureUnit: settings?.measureUnit || "cm",
+              accent: settings?.accent || "#f97316",
+              goalWeight: settings?.goalWeight || "75",
+              age: settings?.age || "",
+              height: settings?.height || "",
+              subscriptionPlan: verifyData.subscription.subscriptionPlan,
+              subscriptionEndDate: verifyData.subscription.subscriptionEndDate,
+              subscriptionExpiresAt: new Date(verifyData.subscription.subscriptionExpiresAt),
+              subscriptionStatus: "active",
+              subscriptionActivatedAt: new Date(),
+              subscriptionPaymentId: paymentResult?.razorpay_payment_id || "",
+              subscriptionOrderId: paymentResult?.razorpay_order_id || "",
+            };
+
+            await saveProfile(profileUpdate);
+            setSettings((s) => ({ ...s, ...profileUpdate }));
+            setErr("");
+          } catch (e) {
+            setErr(e.message || "Payment succeeded but verification failed");
+          }
+        },
+      };
+
+      const paymentObject = new RazorpayCtor(options);
+      paymentObject.on("payment.failed", (response) => {
+        const message = response?.error?.description || "Payment failed. Please try again.";
+        setErr(message);
+      });
+      paymentObject.open();
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -732,14 +849,14 @@ function GymPage({ settings, setSettings }) {
         <div className="rounded-2xl p-8" style={{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)"}}>
           <p className="text-sm text-white/70 mb-6">Login is free. To use the Gym section, choose a subscription plan.</p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <button onClick={() => activatePlan("monthly")} disabled={subBusy}
+            <button type="button" onClick={() => activatePlan("monthly")} disabled={subBusy}
               className="rounded-xl p-5 text-left transition-all hover:scale-[1.01]"
               style={{border:"1px solid rgba(255,255,255,0.12)",background:"rgba(59,130,246,0.08)"}}>
               <p className="text-xs font-mono uppercase tracking-widest text-blue-300">Monthly</p>
               <p className="text-3xl font-black mt-2">₹69</p>
               <p className="text-xs text-white/50 mt-2">30 days access</p>
             </button>
-            <button onClick={() => activatePlan("yearly")} disabled={subBusy}
+            <button type="button" onClick={() => activatePlan("yearly")} disabled={subBusy}
               className="rounded-xl p-5 text-left transition-all hover:scale-[1.01]"
               style={{border:"1px solid rgba(255,255,255,0.12)",background:"rgba(34,197,94,0.08)"}}>
               <p className="text-xs font-mono uppercase tracking-widest text-green-300">Yearly</p>

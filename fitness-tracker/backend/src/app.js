@@ -4,6 +4,7 @@ import helmet from "helmet";
 import compression from "compression";
 import morgan from "morgan";
 import healthRouter from "./routes/health.js";
+import paymentsRouter from "./routes/payments.js";
 
 const app = express();
 const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173")
@@ -41,6 +42,7 @@ app.get("/", (req, res) => {
 });
 
 app.use("/api/health", healthRouter);
+app.use("/api/payments", paymentsRouter);
 
 app.use((req, res) => {
   res.status(404).json({
