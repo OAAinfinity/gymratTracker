@@ -909,17 +909,29 @@ function GymPage({ settings, setSettings }) {
   }
 
   const save = async () => {
-    if (!form.exercise||!form.sets||!form.reps) { setErr("Fill exercise, sets, and reps."); return; }
+    const exerciseName = form.exercise.trim();
+    if (!exerciseName || !form.sets||!form.reps) { setErr("Fill exercise, sets, and reps."); return; }
     setBusy(true); setErr("");
     try {
-      await add({ ...form, sets:parseInt(form.sets), reps:parseInt(form.reps), weight:parseFloat(form.weight||0), rpe:parseInt(form.rpe||0) });
+      await add({ ...form, exercise: exerciseName, sets:parseInt(form.sets), reps:parseInt(form.reps), weight:parseFloat(form.weight||0), rpe:parseInt(form.rpe||0) });
       setForm(f=>({...f, exercise:"", sets:"", reps:"", weight:"", rpe:"", note:""}));
     } catch(e) { setErr(e.message); }
     finally { setBusy(false); }
   };
 
   const sorted  = [...workouts].sort((a,b)=>b.date.localeCompare(a.date));
-  const grouped = sorted.reduce((acc,w)=>{ if(!acc[w.date])acc[w.date]=[]; acc[w.date].push(w); return acc; }, {});
+  const groupedByExercise = sorted.reduce((acc, workout) => {
+    const normalizedKey = (workout.exercise || "Unnamed Exercise").trim().toLowerCase();
+    if (!acc[normalizedKey]) {
+      acc[normalizedKey] = {
+        title: (workout.exercise || "Unnamed Exercise").trim() || "Unnamed Exercise",
+        logs: [],
+      };
+    }
+    acc[normalizedKey].logs.push(workout);
+    return acc;
+  }, {});
+  const exerciseGroups = Object.values(groupedByExercise).sort((a, b) => b.logs[0].date.localeCompare(a.logs[0].date));
   const weekAgo = new Date(Date.now()-7*86400000).toISOString().split("T")[0];
   const weekly  = workouts.filter(w=>w.date>=weekAgo);
   const weekVol = weekly.reduce((s,w)=>s+w.sets*w.reps*w.weight,0);
@@ -965,17 +977,18 @@ function GymPage({ settings, setSettings }) {
       </div>
 
       {loading?<div className="flex justify-center py-8"><Spin/></div>
-      :Object.entries(grouped).map(([date,exs])=>(
-        <div key={date} className="rounded-2xl overflow-hidden" style={{border:"1px solid rgba(255,255,255,0.07)"}}>
+      :exerciseGroups.map((group)=>(
+        <div key={group.title.toLowerCase()} className="rounded-2xl overflow-hidden" style={{border:"1px solid rgba(255,255,255,0.07)"}}>
           <div className="px-6 py-3 flex items-center justify-between" style={{background:"rgba(255,255,255,0.04)"}}>
-            <span className="font-mono text-sm text-white/60">{date}</span>
-            <span className="text-[11px] font-mono text-white/30">{exs.length} exercises · {exs.reduce((s,e)=>s+e.sets*e.reps*e.weight,0).toLocaleString()} kg vol</span>
+            <span className="font-mono text-sm text-white/60">{group.title}</span>
+            <span className="text-[11px] font-mono text-white/30">{group.logs.length} logs · {group.logs.reduce((s,e)=>s+e.sets*e.reps*e.weight,0).toLocaleString()} kg vol</span>
           </div>
-          {exs.map(e=>(
+          {group.logs.map(e=>(
             <div key={e.id} className="px-6 py-4 flex items-center gap-4" style={{borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
               <div className="w-2 h-10 rounded-full flex-shrink-0" style={{background:MUSCLE_COLORS[e.muscle]||"#888"}}/>
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-sm truncate">{e.exercise}</p>
+                <p className="text-[11px] text-white/40 font-mono mt-0.5">{e.date}</p>
                 {e.note&&<p className="text-[11px] text-white/30 font-mono mt-0.5 truncate">{e.note}</p>}
               </div>
               <div className="flex items-center gap-3 flex-shrink-0">
