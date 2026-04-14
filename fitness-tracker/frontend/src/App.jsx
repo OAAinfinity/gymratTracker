@@ -706,6 +706,7 @@ function GymPage({ settings, setSettings }) {
   const [busy, setBusy] = useState(false);
   const [err,  setErr]  = useState("");
   const [subBusy, setSubBusy] = useState(false);
+  const [historyQuery, setHistoryQuery] = useState("");
   const configuredApiBase = (import.meta.env.VITE_API_BASE_URL || "").trim();
   const normalizeApiBase = (value) => {
     const trimmed = (value || "").trim();
@@ -920,7 +921,23 @@ function GymPage({ settings, setSettings }) {
   };
 
   const sorted  = [...workouts].sort((a,b)=>b.date.localeCompare(a.date));
-  const groupedByExercise = sorted.reduce((acc, workout) => {
+  const getDayLabel = (isoDate) => {
+    if (!isoDate) return "Unknown Day";
+    const parsed = new Date(`${isoDate}T00:00:00`);
+    if (Number.isNaN(parsed.getTime())) return "Unknown Day";
+    return parsed.toLocaleDateString(undefined, { weekday: "long" });
+  };
+
+  const normalizedHistoryQuery = historyQuery.trim().toLowerCase();
+  const filteredSorted = normalizedHistoryQuery
+    ? sorted.filter((workout) => {
+      const dateText = (workout.date || "").toLowerCase();
+      const dayText = getDayLabel(workout.date).toLowerCase();
+      return dateText.includes(normalizedHistoryQuery) || dayText.includes(normalizedHistoryQuery);
+    })
+    : sorted;
+
+  const groupedByExercise = filteredSorted.reduce((acc, workout) => {
     const normalizedKey = (workout.exercise || "Unnamed Exercise").trim().toLowerCase();
     if (!acc[normalizedKey]) {
       acc[normalizedKey] = {
@@ -976,6 +993,16 @@ function GymPage({ settings, setSettings }) {
         </button>
       </div>
 
+      <div className="rounded-2xl p-4" style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.07)"}}>
+        <Inp
+          label="Search Workout Day / Date"
+          type="text"
+          placeholder="e.g. monday, mon, 2026-04-14"
+          value={historyQuery}
+          onChange={e=>setHistoryQuery(e.target.value)}
+        />
+      </div>
+
       {loading?<div className="flex justify-center py-8"><Spin/></div>
       :exerciseGroups.map((group)=>(
         <div key={group.title.toLowerCase()} className="rounded-2xl overflow-hidden" style={{border:"1px solid rgba(255,255,255,0.07)"}}>
@@ -983,27 +1010,41 @@ function GymPage({ settings, setSettings }) {
             <span className="font-mono text-sm text-white/60">{group.title}</span>
             <span className="text-[11px] font-mono text-white/30">{group.logs.length} logs · {group.logs.reduce((s,e)=>s+e.sets*e.reps*e.weight,0).toLocaleString()} kg vol</span>
           </div>
-          {group.logs.map(e=>(
-            <div key={e.id} className="px-6 py-4 flex items-center gap-4" style={{borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
-              <div className="w-2 h-10 rounded-full flex-shrink-0" style={{background:MUSCLE_COLORS[e.muscle]||"#888"}}/>
-              <div className="flex-1 min-w-0">
-                <p className="font-bold text-sm truncate">{e.exercise}</p>
-                <p className="text-[11px] text-white/40 font-mono mt-0.5">{e.date}</p>
-                {e.note&&<p className="text-[11px] text-white/30 font-mono mt-0.5 truncate">{e.note}</p>}
-              </div>
-              <div className="flex items-center gap-3 flex-shrink-0">
-                <Badge label={e.muscle} color={MUSCLE_COLORS[e.muscle]||"#888"}/>
-                <div className="text-right">
-                  <p className="font-mono font-bold text-sm">{e.sets}×{e.reps} @ {e.weight}kg</p>
-                  {e.rpe>0&&<p className="text-[11px] text-white/30 font-mono">RPE {e.rpe}</p>}
+          {Object.entries(group.logs.reduce((acc, log) => {
+            if (!acc[log.date]) acc[log.date] = [];
+            acc[log.date].push(log);
+            return acc;
+          }, {}))
+            .sort(([dateA], [dateB]) => dateB.localeCompare(dateA))
+            .map(([date, logs]) => (
+              <div key={`${group.title}-${date}`}>
+                <div className="px-6 py-2 flex items-center justify-between" style={{background:"rgba(255,255,255,0.02)",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
+                  <span className="text-[11px] font-mono text-white/50">{date}</span>
+                  <span className="text-[11px] font-mono text-white/35">{getDayLabel(date)}</span>
                 </div>
-                <button onClick={()=>del(e.id)} className="text-white/20 hover:text-red-400 transition-colors text-xs">✕</button>
+                {logs.map(e=>(
+                  <div key={e.id} className="px-6 py-4 flex items-center gap-4" style={{borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+                    <div className="w-2 h-10 rounded-full flex-shrink-0" style={{background:MUSCLE_COLORS[e.muscle]||"#888"}}/>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-sm truncate">{e.exercise}</p>
+                      {e.note&&<p className="text-[11px] text-white/30 font-mono mt-0.5 truncate">{e.note}</p>}
+                    </div>
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      <Badge label={e.muscle} color={MUSCLE_COLORS[e.muscle]||"#888"}/>
+                      <div className="text-right">
+                        <p className="font-mono font-bold text-sm">{e.sets}×{e.reps} @ {e.weight}kg</p>
+                        {e.rpe>0&&<p className="text-[11px] text-white/30 font-mono">RPE {e.rpe}</p>}
+                      </div>
+                      <button onClick={()=>del(e.id)} className="text-white/20 hover:text-red-400 transition-colors text-xs">✕</button>
+                    </div>
+                  </div>
+                ))}
               </div>
-            </div>
-          ))}
+            ))}
         </div>
       ))}
       {!loading&&workouts.length===0&&<p className="text-center text-white/30 text-sm font-mono py-4">No workouts logged yet.</p>}
+      {!loading&&workouts.length>0&&exerciseGroups.length===0&&<p className="text-center text-white/30 text-sm font-mono py-4">No logs match that day/date search.</p>}
     </div>
   );
 }
