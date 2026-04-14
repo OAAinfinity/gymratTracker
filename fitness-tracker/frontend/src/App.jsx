@@ -707,6 +707,7 @@ function GymPage({ settings, setSettings }) {
   const [err,  setErr]  = useState("");
   const [subBusy, setSubBusy] = useState(false);
   const [historyQuery, setHistoryQuery] = useState("");
+  const [analyticsExerciseKey, setAnalyticsExerciseKey] = useState("");
   const configuredApiBase = (import.meta.env.VITE_API_BASE_URL || "").trim();
   const normalizeApiBase = (value) => {
     const trimmed = (value || "").trim();
@@ -928,6 +929,19 @@ function GymPage({ settings, setSettings }) {
     return parsed.toLocaleDateString(undefined, { weekday: "long" });
   };
 
+  const buildExerciseGroups = (entries) => Object.values(entries.reduce((acc, workout) => {
+    const normalizedKey = (workout.exercise || "Unnamed Exercise").trim().toLowerCase();
+    if (!acc[normalizedKey]) {
+      acc[normalizedKey] = {
+        key: normalizedKey,
+        title: (workout.exercise || "Unnamed Exercise").trim() || "Unnamed Exercise",
+        logs: [],
+      };
+    }
+    acc[normalizedKey].logs.push(workout);
+    return acc;
+  }, {})).sort((a, b) => b.logs[0].date.localeCompare(a.logs[0].date));
+
   const normalizedHistoryQuery = historyQuery.trim().toLowerCase();
   const filteredSorted = normalizedHistoryQuery
     ? sorted.filter((workout) => {
@@ -937,18 +951,24 @@ function GymPage({ settings, setSettings }) {
     })
     : sorted;
 
-  const groupedByExercise = filteredSorted.reduce((acc, workout) => {
-    const normalizedKey = (workout.exercise || "Unnamed Exercise").trim().toLowerCase();
-    if (!acc[normalizedKey]) {
-      acc[normalizedKey] = {
-        title: (workout.exercise || "Unnamed Exercise").trim() || "Unnamed Exercise",
-        logs: [],
-      };
-    }
-    acc[normalizedKey].logs.push(workout);
-    return acc;
-  }, {});
-  const exerciseGroups = Object.values(groupedByExercise).sort((a, b) => b.logs[0].date.localeCompare(a.logs[0].date));
+  const exerciseGroups = buildExerciseGroups(filteredSorted);
+  const allExerciseGroups = buildExerciseGroups(sorted);
+  const analyticsSelectedKey = allExerciseGroups.some((group) => group.key === analyticsExerciseKey)
+    ? analyticsExerciseKey
+    : allExerciseGroups[0]?.key || "";
+  const selectedAnalyticsGroup = allExerciseGroups.find((group) => group.key === analyticsSelectedKey) || null;
+  const selectedAnalyticsLogs = selectedAnalyticsGroup?.logs || [];
+  const analyticsTotalVolume = selectedAnalyticsLogs.reduce((sum, log) => sum + log.sets * log.reps * log.weight, 0);
+  const analyticsMaxWeight = selectedAnalyticsLogs.length ? Math.max(...selectedAnalyticsLogs.map((log) => log.weight || 0)) : 0;
+  const analyticsAvgWeight = selectedAnalyticsLogs.length
+    ? (selectedAnalyticsLogs.reduce((sum, log) => sum + (log.weight || 0), 0) / selectedAnalyticsLogs.length)
+    : 0;
+  const analyticsAvgRpeLogs = selectedAnalyticsLogs.filter((log) => (log.rpe || 0) > 0);
+  const analyticsAvgRpe = analyticsAvgRpeLogs.length
+    ? (analyticsAvgRpeLogs.reduce((sum, log) => sum + log.rpe, 0) / analyticsAvgRpeLogs.length)
+    : null;
+  const analyticsUniqueDays = new Set(selectedAnalyticsLogs.map((log) => log.date)).size;
+  const analyticsTrendData = [...selectedAnalyticsLogs].reverse().map((log) => log.weight || 0);
   const weekAgo = new Date(Date.now()-7*86400000).toISOString().split("T")[0];
   const weekly  = workouts.filter(w=>w.date>=weekAgo);
   const weekVol = weekly.reduce((s,w)=>s+w.sets*w.reps*w.weight,0);
@@ -960,6 +980,41 @@ function GymPage({ settings, setSettings }) {
         <Card label="This Week" value={new Set(weekly.map(w=>w.date)).size} unit="sessions" sub="Unique training days" accent="#3b82f6"/>
         <Card label="Weekly Volume" value={weekVol>0?weekVol.toLocaleString():"—"} unit="kg" sub="sets × reps × weight" accent="#a855f7"/>
         <Card label="All Exercises" value={workouts.length} unit="logged" sub="Total entries" accent="#f97316"/>
+      </div>
+
+      <div className="rounded-2xl p-6" style={{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)"}}>
+        <SecHead title="EXERCISE ANALYTICS" sub="Performance insights for a selected exercise"/>
+        {allExerciseGroups.length===0 ? (
+          <p className="text-sm text-white/40 font-mono">Log at least one exercise to unlock analytics.</p>
+        ) : (
+          <div className="space-y-5">
+            <div>
+              <label className="text-[11px] font-mono uppercase tracking-wider text-white/40 block mb-2">Select Exercise</label>
+              <select value={analyticsSelectedKey} onChange={e=>setAnalyticsExerciseKey(e.target.value)}
+                className="w-full rounded-xl px-4 py-3 text-white font-mono outline-none text-sm"
+                style={{border:"1px solid rgba(255,255,255,0.1)",background:"#1a1a1a",colorScheme:"dark"}}>
+                {allExerciseGroups.map(group=><option key={group.key} value={group.key}>{group.title}</option>)}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <Card label="Total Logs" value={selectedAnalyticsLogs.length} sub="Times this exercise was recorded" accent="#3b82f6"/>
+              <Card label="Total Volume" value={analyticsTotalVolume.toLocaleString()} unit="kg" sub="sets × reps × weight" accent="#a855f7"/>
+              <Card label="Best Weight" value={analyticsMaxWeight>0?analyticsMaxWeight:"—"} unit={analyticsMaxWeight>0?"kg":""} sub="Highest logged weight" accent="#f97316"/>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <Card label="Avg Weight" value={analyticsAvgWeight>0?analyticsAvgWeight.toFixed(1):"—"} unit={analyticsAvgWeight>0?"kg":""} sub="Average load per log" accent="#22c55e"/>
+              <Card label="Avg RPE" value={analyticsAvgRpe!==null?analyticsAvgRpe.toFixed(1):"—"} sub={analyticsAvgRpe!==null?"Only logs with RPE":"No RPE data yet"} accent="#ec4899"/>
+              <Card label="Training Days" value={analyticsUniqueDays} sub={`Last logged: ${selectedAnalyticsLogs[0]?.date || "—"}`} accent="#06b6d4"/>
+            </div>
+
+            <div className="rounded-xl p-4" style={{border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.02)"}}>
+              <p className="text-[11px] font-mono uppercase tracking-widest text-white/40 mb-3">Weight Trend</p>
+              <Sparkline data={analyticsTrendData} color="#f97316" height={56}/>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="rounded-2xl p-6" style={{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)"}}>
