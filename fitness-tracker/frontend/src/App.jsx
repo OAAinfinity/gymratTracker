@@ -860,8 +860,7 @@ function InchesAnalyticsPage({ settings }) {
 // GYM PAGE
 // ══════════════════════════════════════════════════════════════════════════════
 function GymPage({ settings, setSettings }) {
-  const { user } = useAuth();
-  const { save: saveProfile } = useUserDoc(user?.uid);
+  const { user, firebase } = useAuth();
   const subActive = isGymSubscriptionActive(settings);
   const { data: workouts, loading } = useCollection("workouts", subActive ? user?.uid : null);
   const add = useAdd("workouts");
@@ -882,16 +881,26 @@ function GymPage({ settings, setSettings }) {
   };
 
   const hardcodedBackendBase = "https://gymrat-tracker-r7u8.vercel.app";
+  const localBackendBase = "http://localhost:4000";
+  const isLocalHost = window.location.hostname === "localhost";
   const apiBase = normalizeApiBase(configuredApiBase)
-    || (window.location.hostname === "localhost"
-      ? "http://localhost:4000"
+    || (isLocalHost
+      ? localBackendBase
       : hardcodedBackendBase);
 
-  const apiCandidates = [...new Set([
-    normalizeApiBase(configuredApiBase),
-    apiBase,
-    hardcodedBackendBase,
-  ].filter(Boolean))];
+  const apiCandidates = [...new Set((isLocalHost
+    ? [
+      localBackendBase,
+      normalizeApiBase(configuredApiBase),
+      hardcodedBackendBase,
+      apiBase,
+    ]
+    : [
+      normalizeApiBase(configuredApiBase),
+      apiBase,
+      hardcodedBackendBase,
+    ]
+  ).filter(Boolean))];
 
   const buildApiUrl = (path, baseOverride) => {
     const resolvedBase = baseOverride || apiBase;
@@ -900,15 +909,21 @@ function GymPage({ settings, setSettings }) {
     return `${normalizedBase}${normalizedPath}`;
   };
 
-  const postJsonWithApiFallback = async (path, payload) => {
+  const postJsonWithApiFallback = async (path, payload, authHeaders = {}) => {
     let lastErrorMessage = "Unable to connect to payment server";
 
     for (const base of apiCandidates) {
-      const response = await fetch(buildApiUrl(path, base), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      let response;
+      try {
+        response = await fetch(buildApiUrl(path, base), {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders },
+          body: JSON.stringify(payload),
+        });
+      } catch {
+        // Try next candidate if this host is unreachable or blocked by network/CORS.
+        continue;
+      }
 
       const raw = await response.text();
       let data = null;
@@ -966,7 +981,7 @@ function GymPage({ settings, setSettings }) {
 
       const { data: orderData, base: activeApiBase } = await postJsonWithApiFallback(
         "/api/payments/create-order",
-        { plan }
+        { plan, uid: user.uid }
       );
 
       if (!orderData?.order?.id || !orderData?.keyId) {
@@ -1006,27 +1021,14 @@ function GymPage({ settings, setSettings }) {
               throw new Error(verifyData?.message || "Payment verification failed");
             }
 
-            const profileUpdate = {
-              name: settings?.name || user?.displayName || "",
-              email: user?.email || "",
-              goal: settings?.goal || "Fat Loss",
-              weightUnit: settings?.weightUnit || "kg",
-              measureUnit: settings?.measureUnit || "cm",
-              accent: settings?.accent || "#f97316",
-              goalWeight: settings?.goalWeight || "75",
-              age: settings?.age || "",
-              height: settings?.height || "",
-              subscriptionPlan: verifyData.subscription.subscriptionPlan,
-              subscriptionEndDate: verifyData.subscription.subscriptionEndDate,
-              subscriptionExpiresAt: new Date(verifyData.subscription.subscriptionExpiresAt),
-              subscriptionStatus: "active",
-              subscriptionActivatedAt: new Date(),
-              subscriptionPaymentId: paymentResult?.razorpay_payment_id || "",
-              subscriptionOrderId: paymentResult?.razorpay_order_id || "",
-            };
-
-            await saveProfile(profileUpdate);
-            setSettings((s) => ({ ...s, ...profileUpdate }));
+            // Backend verify endpoint is the source of truth. Refresh profile after success.
+            if (firebase && user?.uid) {
+              const profileRef = firebase.doc(firebase.db, "users", user.uid);
+              const profileSnap = await firebase.getDoc(profileRef);
+              if (profileSnap.exists()) {
+                setSettings((s) => ({ ...s, ...profileSnap.data() }));
+              }
+            }
             setErr("");
           } catch (e) {
             setErr(e.message || "Payment succeeded but verification failed");

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import crypto from "crypto";
 import Razorpay from "razorpay";
+import admin from "../config/firebaseAdmin.js";
 
 const router = Router();
 
@@ -24,8 +25,9 @@ function getRazorpayClient() {
 }
 
 router.post("/create-order", async (req, res) => {
-  const { plan } = req.body || {};
+  const { plan, uid } = req.body || {};
   const planConfig = PLAN_CONFIG[plan];
+  const userUid = uid || "guest";
 
   if (!planConfig) {
     res.status(400).json({ status: "error", message: "Invalid subscription plan" });
@@ -38,7 +40,7 @@ router.post("/create-order", async (req, res) => {
       amount: planConfig.amount,
       currency: "INR",
       receipt: `gym_${plan}_${Date.now()}`,
-      notes: { plan },
+      notes: { plan, uid: userUid },
     });
 
     res.json({
@@ -47,6 +49,7 @@ router.post("/create-order", async (req, res) => {
       order,
       plan,
       days: planConfig.days,
+      uid: userUid,
     });
   } catch (error) {
     res.status(500).json({
@@ -56,7 +59,7 @@ router.post("/create-order", async (req, res) => {
   }
 });
 
-router.post("/verify", (req, res) => {
+router.post("/verify", async (req, res) => {
   const {
     razorpay_order_id: orderId,
     razorpay_payment_id: paymentId,
@@ -88,18 +91,91 @@ router.post("/verify", (req, res) => {
     return;
   }
 
-  const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + planConfig.days);
+  try {
+    // Defense-in-depth: verify the order belongs to the same uid and plan.
+    const razorpay = getRazorpayClient();
+    const order = await razorpay.orders.fetch(orderId);
+    const orderUid = order?.notes?.uid;
+    const orderPlan = order?.notes?.plan;
+    const userUid = orderUid;
 
-  res.json({
-    status: "ok",
-    verified: true,
-    subscription: {
+    if (!order || !userUid || orderPlan !== plan) {
+      res.status(400).json({
+        status: "error",
+        message: "Order does not match subscription plan or user",
+      });
+      return;
+    }
+
+    const db = admin.firestore();
+    const profileRef = db.collection("users").doc(userUid);
+    const paymentEventRef = db.collection("paymentEvents").doc(paymentId);
+    const expiresAtDate = new Date();
+    expiresAtDate.setDate(expiresAtDate.getDate() + planConfig.days);
+    const expiresAt = admin.firestore.Timestamp.fromDate(expiresAtDate);
+    const subscriptionSnapshot = {
       subscriptionPlan: plan,
-      subscriptionEndDate: expiresAt.toISOString().split("T")[0],
-      subscriptionExpiresAt: expiresAt.toISOString(),
-    },
-  });
+      subscriptionStatus: "active",
+      subscriptionActivatedAt: new Date().toISOString(),
+      subscriptionExpiresAt: expiresAtDate.toISOString(),
+      subscriptionEndDate: expiresAtDate.toISOString().split("T")[0],
+      subscriptionPaymentId: paymentId,
+      subscriptionOrderId: orderId,
+    };
+
+    const txResult = await db.runTransaction(async (tx) => {
+      const existingEvent = await tx.get(paymentEventRef);
+      if (existingEvent.exists) {
+        return {
+          alreadyProcessed: true,
+          subscription: existingEvent.data()?.subscription || subscriptionSnapshot,
+        };
+      }
+
+      tx.set(
+        profileRef,
+        {
+          subscriptionPlan: plan,
+          subscriptionStatus: "active",
+          subscriptionActivatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          subscriptionExpiresAt: expiresAt,
+          subscriptionEndDate: expiresAtDate.toISOString().split("T")[0],
+          subscriptionPaymentId: paymentId,
+          subscriptionOrderId: orderId,
+        },
+        { merge: true }
+      );
+
+      tx.set(paymentEventRef, {
+        uid: userUid,
+        plan,
+        razorpayOrderId: orderId,
+        razorpayPaymentId: paymentId,
+        razorpaySignature: signature,
+        verificationStatus: "verified",
+        subscription: subscriptionSnapshot,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      return {
+        alreadyProcessed: false,
+        subscription: subscriptionSnapshot,
+      };
+    });
+
+    res.json({
+      status: "ok",
+      verified: true,
+      alreadyProcessed: txResult.alreadyProcessed,
+      uid: userUid,
+      subscription: txResult.subscription,
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: "error",
+      message: error.message || "Failed to activate subscription",
+    });
+  }
 });
 
 export default router;

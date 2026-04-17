@@ -17,7 +17,8 @@ app.set("trust proxy", 1);
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
+      const isLocalhostOrigin = Boolean(origin) && /^https?:\/\/localhost:\d+$/i.test(origin);
+      if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin) || isLocalhostOrigin) {
         callback(null, true);
         return;
       }

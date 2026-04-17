@@ -3,4 +3,5 @@ node_modules/
 .env.local
 frontend/dist/
 backend/.env
+backend/serviceAccountKey.json
 .DS_Store
