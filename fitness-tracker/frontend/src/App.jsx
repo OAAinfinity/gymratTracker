@@ -1,4 +1,4 @@
-import React, { useState, useEffect, createContext, useContext, useCallback } from "react";
+import React, { useState, useEffect, createContext, useContext, useCallback, useMemo } from "react";
 import { initializeApp, getApps } from "firebase/app";
 import {
   getAuth,
@@ -26,6 +26,9 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { firebaseConfig } from "./firebaseConfig";
+import MeasurementForm from "./components/inches/MeasurementForm";
+import InchLossChart from "./components/inches/InchLossChart";
+import AnalyticsSummary from "./components/inches/AnalyticsSummary";
 
 let _fb = null;
 async function getFirebase() {
@@ -103,6 +106,62 @@ function useCollection(col, uid) {
   }, [firebase, uid, col]);
 
   return { data, loading };
+}
+
+function useUserMeasurements(uid) {
+  const [entries, setEntries] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const { firebase } = useAuth();
+
+  useEffect(() => {
+    if (!firebase || !uid) {
+      setEntries([]);
+      setLoading(false);
+      return;
+    }
+
+    const measurementsRef = firebase.collection(firebase.db, "users", uid, "measurements");
+    const measurementsQuery = firebase.query(measurementsRef, firebase.orderBy("date", "asc"));
+
+    const unsub = firebase.onSnapshot(
+      measurementsQuery,
+      (snapshot) => {
+        setEntries(snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })));
+        setLoading(false);
+      },
+      () => {
+        setEntries([]);
+        setLoading(false);
+      }
+    );
+
+    return unsub;
+  }, [firebase, uid]);
+
+  const saveMeasurement = useCallback(
+    async ({ dateKey, notes, values }) => {
+      if (!firebase || !uid) throw new Error("Not authenticated");
+      const measuredAt = new Date(`${dateKey}T00:00:00`);
+      await firebase.setDoc(firebase.doc(firebase.db, "users", uid, "measurements", dateKey), {
+        dateKey,
+        date: measuredAt,
+        notes: notes || "",
+        ...values,
+        updatedAt: firebase.serverTimestamp(),
+      });
+    },
+    [firebase, uid]
+  );
+
+  const deleteMeasurement = useCallback(
+    async (dateKey) => {
+      if (!firebase || !uid || !dateKey) return;
+      await firebase.deleteDoc(firebase.doc(firebase.db, "users", uid, "measurements", dateKey));
+    },
+    [firebase, uid]
+  );
+
+  return { entries, loading, saveMeasurement, deleteMeasurement };
 }
 
 function useUserDoc(uid) {
@@ -686,6 +745,112 @@ function InchesPage({ settings }) {
             );
           })}
         </div>
+      )}
+    </div>
+  );
+}
+
+function InchesAnalyticsPage({ settings }) {
+  const { user } = useAuth();
+  const { entries, loading, saveMeasurement, deleteMeasurement } = useUserMeasurements(user?.uid);
+  const parts = useMemo(() => ([
+    { key: "waist", label: "Waist", color: "#f97316" },
+    { key: "chest", label: "Chest", color: "#3b82f6" },
+    { key: "hips", label: "Hips", color: "#a855f7" },
+    { key: "thigh", label: "Thigh", color: "#22c55e" },
+    { key: "arms", label: "Arms", color: "#eab308" },
+  ]), []);
+  const existingDateKeys = useMemo(() => new Set(entries.map((entry) => entry.dateKey)), [entries]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [range, setRange] = useState("30");
+  const latestEntry = useMemo(() => (entries.length ? entries[entries.length - 1] : null), [entries]);
+
+  const filteredEntries = useMemo(() => {
+    if (!entries.length || range === "all") return entries;
+    const days = Number.parseInt(range, 10);
+    if (!Number.isFinite(days)) return entries;
+    const latestDate = new Date(`${entries[entries.length - 1].dateKey}T00:00:00`).getTime();
+    return entries.filter((entry) => {
+      const entryDate = new Date(`${entry.dateKey}T00:00:00`).getTime();
+      return latestDate - entryDate <= (days - 1) * 24 * 60 * 60 * 1000;
+    });
+  }, [entries, range]);
+
+  const onSaveMeasurements = async (payload) => {
+    setBusy(true);
+    setErr("");
+    try {
+      const normalizedValues = Object.fromEntries(
+        parts.map((part) => {
+          const nextVal = payload.values?.[part.key];
+          if (Number.isFinite(nextVal)) return [part.key, nextVal];
+          const prevVal = latestEntry?.[part.key];
+          return [part.key, Number.isFinite(prevVal) ? prevVal : 0];
+        })
+      );
+
+      await saveMeasurement({ ...payload, values: normalizedValues });
+    } catch (e) {
+      setErr(e.message || "Failed to save measurements.");
+      throw e;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-8">
+      <SecHead title="INCH LOSS ANALYTICS" sub="Daily measurement logs and visual progress tracking"/>
+
+      <MeasurementForm
+        parts={parts}
+        unit={settings?.measureUnit || "cm"}
+        existingDateKeys={existingDateKeys}
+        onSave={onSaveMeasurements}
+        busy={busy}
+        externalError={err}
+      />
+
+      {loading ? (
+        <div className="flex justify-center py-8"><Spin/></div>
+      ) : (
+        <>
+          <InchLossChart
+            entries={filteredEntries}
+            parts={parts}
+            unit={settings?.measureUnit || "cm"}
+            range={range}
+            setRange={setRange}
+          />
+
+          <AnalyticsSummary
+            entries={filteredEntries}
+            allEntries={entries}
+            parts={parts}
+            unit={settings?.measureUnit || "cm"}
+          />
+
+          <div className="rounded-2xl overflow-hidden" style={{border:"1px solid rgba(255,255,255,0.07)"}}>
+            <div className="px-6 py-4" style={{background:"rgba(255,255,255,0.04)"}}>
+              <p className="text-[11px] font-mono uppercase tracking-widest text-white/40">MEASUREMENT HISTORY ({entries.length} days)</p>
+            </div>
+            {entries.length===0 ? (
+              <p className="text-center text-white/30 text-sm font-mono py-8">No measurement logs yet.</p>
+            ) : (
+              [...entries].reverse().map(entry => (
+                <div key={entry.id} className="px-6 py-4 flex items-start justify-between gap-4" style={{borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+                  <div className="space-y-1">
+                    <p className="font-mono text-sm text-white/70">{entry.dateKey}</p>
+                    <p className="text-xs text-white/40 font-mono">Waist {entry.waist} · Chest {entry.chest} · Hips {entry.hips} · Thigh {entry.thigh} · Arms {entry.arms}</p>
+                    {entry.notes && <p className="text-xs text-white/30">{entry.notes}</p>}
+                  </div>
+                  <button type="button" onClick={()=>deleteMeasurement(entry.dateKey)} className="text-white/25 hover:text-red-400 text-xs transition-colors">✕</button>
+                </div>
+              ))
+            )}
+          </div>
+        </>
       )}
     </div>
   );
@@ -1326,7 +1491,7 @@ function AppShell() {
 
   if (!user) return <AuthPage/>;
 
-  const pages = { dashboard:Dashboard, weight:WeightPage, inches:InchesPage, gym:GymPage, calculators:CalcPage, settings:SettingsPage };
+  const pages = { dashboard:Dashboard, weight:WeightPage, inches:InchesAnalyticsPage, gym:GymPage, calculators:CalcPage, settings:SettingsPage };
   const Page  = pages[page];
   const accent = settings.accent||"#f97316";
 
