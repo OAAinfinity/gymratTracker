@@ -48,6 +48,17 @@ service cloud.firestore {
         && data.date is string;
     }
 
+    function validUserDailyMeasurementDoc(data) {
+      return data.date is timestamp
+        && data.dateKey is string
+        && data.waist is number
+        && data.chest is number
+        && data.hips is number
+        && data.thigh is number
+        && data.arms is number
+        && (!("notes" in data) || data.notes is string);
+    }
+
     function validWorkoutDoc(data) {
       return data.uid is string
         && data.exercise is string
@@ -64,6 +75,12 @@ service cloud.firestore {
       allow read: if isOwner(uid);
       allow create, update: if isOwner(uid) && validUserDoc(request.resource.data);
       allow delete: if isOwner(uid);
+
+      match /measurements/{dateKey} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validUserDailyMeasurementDoc(request.resource.data);
+        allow delete: if isOwner(uid);
+      }
     }
 
     match /weights/{docId} {
