@@ -236,10 +236,20 @@ router.post("/webhook", async (req, res) => {
     return;
   }
 
-  const expectedSignature = crypto
-    .createHmac("sha256", webhookSecret)
-    .update(rawBody)
-    .digest("hex");
+  let expectedSignature;
+  try {
+    const signaturePayload = Buffer.isBuffer(rawBody)
+      ? rawBody
+      : Buffer.from(typeof rawBody === "string" ? rawBody : JSON.stringify(req.body || {}));
+
+    expectedSignature = crypto
+      .createHmac("sha256", webhookSecret)
+      .update(signaturePayload)
+      .digest("hex");
+  } catch (error) {
+    res.status(400).json({ status: "error", message: "Unable to validate webhook signature payload" });
+    return;
+  }
 
   if (expectedSignature !== webhookSignature) {
     res.status(400).json({ status: "error", message: "Invalid webhook signature" });
