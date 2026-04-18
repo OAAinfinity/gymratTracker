@@ -116,6 +116,12 @@ Set backend environment variables:
 
 - `NODE_ENV=production`
 - `CORS_ORIGIN=https://<your-frontend-vercel-domain>`
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_CLIENT_EMAIL`
+- `FIREBASE_PRIVATE_KEY`
+- `RAZORPAY_KEY_ID`
+- `RAZORPAY_KEY_SECRET`
+- `RAZORPAY_WEBHOOK_SECRET`
 
 After deploy, verify:
 
@@ -147,6 +153,9 @@ Redeploy frontend after setting variables.
 
 Backend environment variables:
 
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_CLIENT_EMAIL`
+- `FIREBASE_PRIVATE_KEY`
 - `RAZORPAY_KEY_ID`
 - `RAZORPAY_KEY_SECRET`
 - `RAZORPAY_WEBHOOK_SECRET`
