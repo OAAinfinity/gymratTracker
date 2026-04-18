@@ -8,6 +8,24 @@ import paymentsRouter from "./routes/payments.js";
 import workoutsRouter from "./routes/workouts.js";
 
 const app = express();
+const fixedFrontendOrigins = [
+  "https://gymrat-tracker-frontend.vercel.app",
+  "https://www.gymrat-tracker-frontend.vercel.app",
+];
+
+function toNormalizedOrigin(value) {
+  const trimmed = (value || "").trim().replace(/\/+$/, "");
+  if (!trimmed) return null;
+
+  try {
+    const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    const parsed = new URL(withProtocol);
+    return parsed.origin.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 const configuredOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173")
   .split(",")
   .map((origin) => origin.trim())
@@ -22,7 +40,9 @@ if (process.env.FIREBASE_PROJECT_ID) {
   deploymentOrigins.push(`https://${process.env.FIREBASE_PROJECT_ID}.firebaseapp.com`);
 }
 
-const allowedOrigins = [...new Set([...configuredOrigins, ...deploymentOrigins])];
+const allowedOrigins = [...new Set([...configuredOrigins, ...deploymentOrigins, ...fixedFrontendOrigins])]
+  .map(toNormalizedOrigin)
+  .filter(Boolean);
 
 app.set("trust proxy", 1);
 
@@ -30,7 +50,14 @@ app.use(
   cors({
     origin(origin, callback) {
       const isLocalhostOrigin = Boolean(origin) && /^https?:\/\/localhost:\d+$/i.test(origin);
-      if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin) || isLocalhostOrigin) {
+      const normalizedOrigin = toNormalizedOrigin(origin);
+
+      if (
+        !origin
+        || allowedOrigins.includes("*")
+        || (normalizedOrigin && allowedOrigins.includes(normalizedOrigin))
+        || isLocalhostOrigin
+      ) {
         callback(null, true);
         return;
       }
