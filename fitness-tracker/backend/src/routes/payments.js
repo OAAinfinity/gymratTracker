@@ -4,6 +4,7 @@ import Razorpay from "razorpay";
 import admin from "../config/firebaseAdmin.js";
 
 const router = Router();
+const WEBHOOK_EVENTS = new Set(["payment.captured", "payment.failed", "order.paid"]);
 
 const PLAN_CONFIG = {
   monthly: { amount: 6900, days: 30 },
@@ -21,6 +22,96 @@ function getRazorpayClient() {
   return new Razorpay({
     key_id: keyId,
     key_secret: keySecret,
+  });
+}
+
+function buildSubscriptionSnapshot({ plan, paymentId, orderId, days }) {
+  const expiresAtDate = new Date();
+  expiresAtDate.setDate(expiresAtDate.getDate() + days);
+
+  return {
+    expiresAtDate,
+    subscriptionSnapshot: {
+      subscriptionPlan: plan,
+      subscriptionStatus: "active",
+      subscriptionActivatedAt: new Date().toISOString(),
+      subscriptionExpiresAt: expiresAtDate.toISOString(),
+      subscriptionEndDate: expiresAtDate.toISOString().split("T")[0],
+      subscriptionPaymentId: paymentId,
+      subscriptionOrderId: orderId,
+    },
+  };
+}
+
+async function fetchOrderContext(orderId) {
+  const razorpay = getRazorpayClient();
+  const order = await razorpay.orders.fetch(orderId);
+  const orderUid = order?.notes?.uid;
+  const orderPlan = order?.notes?.plan;
+
+  if (!order || !orderUid || !orderPlan) {
+    throw new Error("Order does not include subscription context");
+  }
+
+  return { order, orderUid, orderPlan };
+}
+
+async function activateSubscription({ userUid, plan, orderId, paymentId, signature, verificationStatus, source }) {
+  const planConfig = PLAN_CONFIG[plan];
+  if (!planConfig) {
+    throw new Error("Invalid subscription plan");
+  }
+
+  const db = admin.firestore();
+  const profileRef = db.collection("users").doc(userUid);
+  const paymentEventRef = db.collection("paymentEvents").doc(paymentId);
+  const { expiresAtDate, subscriptionSnapshot } = buildSubscriptionSnapshot({
+    plan,
+    paymentId,
+    orderId,
+    days: planConfig.days,
+  });
+  const expiresAt = admin.firestore.Timestamp.fromDate(expiresAtDate);
+
+  return db.runTransaction(async (tx) => {
+    const existingEvent = await tx.get(paymentEventRef);
+    if (existingEvent.exists) {
+      return {
+        alreadyProcessed: true,
+        subscription: existingEvent.data()?.subscription || subscriptionSnapshot,
+      };
+    }
+
+    tx.set(
+      profileRef,
+      {
+        subscriptionPlan: plan,
+        subscriptionStatus: "active",
+        subscriptionActivatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        subscriptionExpiresAt: expiresAt,
+        subscriptionEndDate: expiresAtDate.toISOString().split("T")[0],
+        subscriptionPaymentId: paymentId,
+        subscriptionOrderId: orderId,
+      },
+      { merge: true }
+    );
+
+    tx.set(paymentEventRef, {
+      uid: userUid,
+      plan,
+      razorpayOrderId: orderId,
+      razorpayPaymentId: paymentId,
+      razorpaySignature: signature || null,
+      verificationStatus,
+      source,
+      subscription: subscriptionSnapshot,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return {
+      alreadyProcessed: false,
+      subscription: subscriptionSnapshot,
+    };
   });
 }
 
@@ -93,13 +184,10 @@ router.post("/verify", async (req, res) => {
 
   try {
     // Defense-in-depth: verify the order belongs to the same uid and plan.
-    const razorpay = getRazorpayClient();
-    const order = await razorpay.orders.fetch(orderId);
-    const orderUid = order?.notes?.uid;
-    const orderPlan = order?.notes?.plan;
+    const { orderUid, orderPlan } = await fetchOrderContext(orderId);
     const userUid = orderUid;
 
-    if (!order || !userUid || orderPlan !== plan) {
+    if (!userUid || orderPlan !== plan) {
       res.status(400).json({
         status: "error",
         message: "Order does not match subscription plan or user",
@@ -107,60 +195,14 @@ router.post("/verify", async (req, res) => {
       return;
     }
 
-    const db = admin.firestore();
-    const profileRef = db.collection("users").doc(userUid);
-    const paymentEventRef = db.collection("paymentEvents").doc(paymentId);
-    const expiresAtDate = new Date();
-    expiresAtDate.setDate(expiresAtDate.getDate() + planConfig.days);
-    const expiresAt = admin.firestore.Timestamp.fromDate(expiresAtDate);
-    const subscriptionSnapshot = {
-      subscriptionPlan: plan,
-      subscriptionStatus: "active",
-      subscriptionActivatedAt: new Date().toISOString(),
-      subscriptionExpiresAt: expiresAtDate.toISOString(),
-      subscriptionEndDate: expiresAtDate.toISOString().split("T")[0],
-      subscriptionPaymentId: paymentId,
-      subscriptionOrderId: orderId,
-    };
-
-    const txResult = await db.runTransaction(async (tx) => {
-      const existingEvent = await tx.get(paymentEventRef);
-      if (existingEvent.exists) {
-        return {
-          alreadyProcessed: true,
-          subscription: existingEvent.data()?.subscription || subscriptionSnapshot,
-        };
-      }
-
-      tx.set(
-        profileRef,
-        {
-          subscriptionPlan: plan,
-          subscriptionStatus: "active",
-          subscriptionActivatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          subscriptionExpiresAt: expiresAt,
-          subscriptionEndDate: expiresAtDate.toISOString().split("T")[0],
-          subscriptionPaymentId: paymentId,
-          subscriptionOrderId: orderId,
-        },
-        { merge: true }
-      );
-
-      tx.set(paymentEventRef, {
-        uid: userUid,
-        plan,
-        razorpayOrderId: orderId,
-        razorpayPaymentId: paymentId,
-        razorpaySignature: signature,
-        verificationStatus: "verified",
-        subscription: subscriptionSnapshot,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-
-      return {
-        alreadyProcessed: false,
-        subscription: subscriptionSnapshot,
-      };
+    const txResult = await activateSubscription({
+      userUid,
+      plan,
+      orderId,
+      paymentId,
+      signature,
+      verificationStatus: "verified",
+      source: "manual_verify",
     });
 
     res.json({
@@ -174,6 +216,102 @@ router.post("/verify", async (req, res) => {
     res.status(500).json({
       status: "error",
       message: error.message || "Failed to activate subscription",
+    });
+  }
+});
+
+router.post("/webhook", async (req, res) => {
+  const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+  const webhookSignature = req.headers["x-razorpay-signature"];
+  const rawBody = req.rawBody;
+  const eventName = req.body?.event;
+
+  if (!webhookSecret) {
+    res.status(500).json({ status: "error", message: "Razorpay webhook secret is not configured" });
+    return;
+  }
+
+  if (!rawBody || !webhookSignature) {
+    res.status(400).json({ status: "error", message: "Missing webhook signature or body" });
+    return;
+  }
+
+  const expectedSignature = crypto
+    .createHmac("sha256", webhookSecret)
+    .update(rawBody)
+    .digest("hex");
+
+  if (expectedSignature !== webhookSignature) {
+    res.status(400).json({ status: "error", message: "Invalid webhook signature" });
+    return;
+  }
+
+  if (!WEBHOOK_EVENTS.has(eventName)) {
+    res.json({ status: "ok", ignored: true, event: eventName || null });
+    return;
+  }
+
+  try {
+    const paymentEntity = req.body?.payload?.payment?.entity;
+    const orderEntity = req.body?.payload?.order?.entity;
+    const orderId = paymentEntity?.order_id || orderEntity?.id;
+    const paymentId = paymentEntity?.id || req.body?.payload?.payment?.entity?.payment_id || orderId;
+
+    if (!orderId || !paymentId) {
+      res.status(400).json({ status: "error", message: "Webhook payload is missing payment context" });
+      return;
+    }
+
+    if (eventName === "payment.failed") {
+      const { orderUid, orderPlan } = await fetchOrderContext(orderId);
+      const db = admin.firestore();
+      await db.collection("paymentEvents").doc(paymentId).set(
+        {
+          uid: orderUid,
+          plan: orderPlan,
+          razorpayOrderId: orderId,
+          razorpayPaymentId: paymentId,
+          razorpaySignature: webhookSignature,
+          verificationStatus: "failed",
+          source: "razorpay_webhook",
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      res.json({
+        status: "ok",
+        verified: true,
+        ignored: true,
+        event: eventName,
+        uid: orderUid,
+      });
+      return;
+    }
+
+    const { orderUid, orderPlan } = await fetchOrderContext(orderId);
+    const txResult = await activateSubscription({
+      userUid: orderUid,
+      plan: orderPlan,
+      orderId,
+      paymentId,
+      signature: webhookSignature,
+      verificationStatus: "webhook_verified",
+      source: "razorpay_webhook",
+    });
+
+    res.json({
+      status: "ok",
+      verified: true,
+      alreadyProcessed: txResult.alreadyProcessed,
+      uid: orderUid,
+      subscription: txResult.subscription,
+      event: eventName,
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: "error",
+      message: error.message || "Failed to process webhook",
     });
   }
 });

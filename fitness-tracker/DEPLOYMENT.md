@@ -149,6 +149,8 @@ Backend environment variables:
 
 - `RAZORPAY_KEY_ID`
 - `RAZORPAY_KEY_SECRET`
+- `RAZORPAY_WEBHOOK_SECRET`
+- `RAZORPAY_WEBHOOK_URL=https://gymrat-tracker-r7u8.vercel.app/api/payments/webhook`
 
 Backend payment endpoints:
 

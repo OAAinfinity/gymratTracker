@@ -220,9 +220,6 @@ const MUSCLE_COLORS = {
   Shoulders:"#22c55e", Hamstrings:"#ec4899", Arms:"#eab308", Core:"#06b6d4",
 };
 
-const PARTS       = ["waist","chest","arms","shoulders","thighs","hips","neck"];
-const PART_COLORS = ["#f97316","#3b82f6","#eab308","#22c55e","#a855f7","#ec4899","#06b6d4"];
-
 function addDaysISO(days) {
   const d = new Date();
   d.setDate(d.getDate() + days);
@@ -484,8 +481,20 @@ function AuthPage() {
 function Dashboard({ settings }) {
   const { user } = useAuth();
   const { data: weights,  loading: wL  } = useCollection("weights",      user?.uid);
-  const { data: measures, loading: mL  } = useCollection("measurements", user?.uid);
+  const { entries: nestedMeasures, loading: mL } = useUserMeasurements(user?.uid);
   const { data: workouts, loading: woL } = useCollection("workouts",      user?.uid);
+
+  const measures = useMemo(
+    () =>
+      nestedMeasures.flatMap((entry) => ([
+        { part: "waist", val: entry.waist, date: entry.dateKey },
+        { part: "chest", val: entry.chest, date: entry.dateKey },
+        { part: "hips", val: entry.hips, date: entry.dateKey },
+        { part: "thigh", val: entry.thigh, date: entry.dateKey },
+        { part: "arms", val: entry.arms, date: entry.dateKey },
+      ]).filter((measurement) => Number.isFinite(measurement.val))),
+    [nestedMeasures]
+  );
   const loading = wL || mL || woL;
 
   const sorted   = [...weights].sort((a,b)=>a.date.localeCompare(b.date));
@@ -495,8 +504,8 @@ function Dashboard({ settings }) {
   const wDelta   = currentW&&startW ? +(currentW-startW).toFixed(1) : null;
   const wPct     = currentW&&startW&&startW!==goalW ? Math.min(100,Math.max(0,Math.round(((startW-currentW)/(startW-goalW))*100))) : 0;
 
-  const latestM={}, firstM={};
-  PARTS.forEach(p=>{
+  const latestM = {}, firstM = {};
+  ["waist", "chest", "hips", "thigh", "arms"].forEach((p) => {
     const arr=measures.filter(m=>m.part===p).sort((a,b)=>a.date.localeCompare(b.date));
     if(arr.length){latestM[p]=arr[arr.length-1].val; firstM[p]=arr[0].val;}
   });
@@ -642,110 +651,6 @@ function WeightPage({ settings }) {
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// INCHES PAGE
-// ══════════════════════════════════════════════════════════════════════════════
-function InchesPage({ settings }) {
-  const { user } = useAuth();
-  const { data: measures, loading } = useCollection("measurements", user?.uid);
-  const add = useAdd("measurements");
-  const del = useDel("measurements");
-  const [form, setForm] = useState(Object.fromEntries([...PARTS.map(p=>[p,""]),["date",new Date().toISOString().split("T")[0]]]));
-  const [busy, setBusy] = useState(false);
-  const [err,  setErr]  = useState("");
-
-  const getPart = p => {
-    const arr=measures.filter(m=>m.part===p).sort((a,b)=>a.date.localeCompare(b.date));
-    return { latest:arr.length?arr[arr.length-1].val:null, first:arr.length?arr[0].val:null, arr };
-  };
-
-  const save = async () => {
-    const filled = PARTS.filter(p=>form[p]);
-    if (!filled.length) { setErr("Enter at least one measurement."); return; }
-    setBusy(true); setErr("");
-    try {
-      await Promise.all(filled.map(p=>add({ part:p, val:parseFloat(form[p]), date:form.date })));
-      setForm(Object.fromEntries([...PARTS.map(p=>[p,""]),["date",new Date().toISOString().split("T")[0]]]));
-    } catch(e) { setErr(e.message); }
-    finally { setBusy(false); }
-  };
-
-  return (
-    <div className="space-y-8">
-      <SecHead title="INCH LOSS TRACKING" sub="Body measurement history and trends"/>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {PARTS.map((p,i)=>{
-          const {latest,first,arr}=getPart(p);
-          return <Card key={p} label={p.toUpperCase()} value={latest} unit={settings?.measureUnit||"cm"}
-            delta={latest&&first?+(latest-first).toFixed(1):undefined} deltaDir="good"
-            sub={first?`Start: ${first}`:undefined} accent={PART_COLORS[i]}
-            sparkData={arr.map(d=>d.val)}/>;
-        })}
-      </div>
-
-      <div className="rounded-2xl p-6" style={{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)"}}>
-        <p className="text-[11px] font-mono uppercase tracking-widest text-white/40 mb-5">LOG MEASUREMENTS ({settings?.measureUnit||"cm"})</p>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-          {PARTS.map((p,i)=>(
-            <div key={p}>
-              <label className="text-[11px] font-mono uppercase tracking-wider block mb-2" style={{color:PART_COLORS[i]+"aa"}}>{p}</label>
-              <input type="number" step="0.1" placeholder="—" value={form[p]}
-                onChange={e=>setForm(f=>({...f,[p]:e.target.value}))}
-                className="w-full rounded-xl px-3 py-2.5 text-white font-mono bg-transparent outline-none text-sm"
-                style={{border:`1px solid ${PART_COLORS[i]}30`,background:`${PART_COLORS[i]}08`}}/>
-            </div>
-          ))}
-          <div>
-            <label className="text-[11px] font-mono uppercase tracking-wider text-white/40 block mb-2">Date</label>
-            <input type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))}
-              className="w-full rounded-xl px-3 py-2.5 text-white font-mono bg-transparent outline-none text-sm"
-              style={{border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.04)",colorScheme:"dark"}}/>
-          </div>
-        </div>
-        {err&&<p className="text-xs text-red-400 font-mono mb-3">{err}</p>}
-        <button onClick={save} disabled={busy}
-          className="w-full py-3 rounded-xl font-mono font-bold tracking-widest text-sm transition-all flex items-center justify-center gap-2"
-          style={{background:"#f97316",color:"#fff",opacity:busy?0.7:1}}>
-          {busy?<><Spin size={16}/>SAVING…</>:"LOG MEASUREMENTS"}
-        </button>
-      </div>
-
-      {loading?<div className="flex justify-center py-8"><Spin/></div>:(
-        <div className="rounded-2xl overflow-hidden" style={{border:"1px solid rgba(255,255,255,0.07)"}}>
-          <div className="px-6 py-4" style={{background:"rgba(255,255,255,0.04)"}}>
-            <p className="text-[11px] font-mono uppercase tracking-widest text-white/40">COMPARISON: START vs NOW</p>
-          </div>
-          {PARTS.map((p,i)=>{
-            const {latest,first}=getPart(p);
-            if(!latest||!first) return (
-              <div key={p} className="px-6 py-4 flex items-center gap-4" style={{borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
-                <div className="w-2 h-8 rounded-full bg-white/10"/>
-                <p className="font-mono text-sm text-white/30 capitalize">{p} — no data</p>
-              </div>
-            );
-            const diff=+(latest-first).toFixed(1), pct=Math.round(((first-latest)/first)*100);
-            return (
-              <div key={p} className="px-6 py-4 flex items-center gap-4" style={{borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
-                <div className="w-2 h-8 rounded-full" style={{background:PART_COLORS[i]}}/>
-                <div className="flex-1">
-                  <p className="font-mono font-bold text-sm capitalize">{p}</p>
-                  <div className="h-1.5 rounded-full mt-2" style={{background:"rgba(255,255,255,0.06)"}}>
-                    <div className="h-full rounded-full transition-all" style={{width:`${Math.max(0,100-pct)}%`,background:PART_COLORS[i]}}/>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs text-white/30 font-mono">{first} → {latest} {settings?.measureUnit||"cm"}</p>
-                  <p className="text-sm font-bold text-green-400 font-mono mt-0.5">{diff} ({pct}%)</p>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
     </div>
   );
 }

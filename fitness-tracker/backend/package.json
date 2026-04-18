@@ -8,7 +8,9 @@
   },
   "scripts": {
     "dev": "node --watch src/server.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "migrate:measurements": "node scripts/migrateLegacyMeasurements.js",
+    "seed:yearly-memberships": "node scripts/seedYearlyMembershipUsers.js"
   },
   "dependencies": {
     "compression": "^1.8.1",

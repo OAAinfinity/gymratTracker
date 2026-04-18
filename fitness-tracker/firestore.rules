@@ -10,6 +10,18 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
+    function hasOnlyFields(data, allowed) {
+      return data.keys().hasOnly(allowed);
+    }
+
+    function hasRequiredFields(data, required) {
+      return data.keys().hasAll(required);
+    }
+
+    function isOwnUid(uidValue) {
+      return isSignedIn() && uidValue == request.auth.uid;
+    }
+
     function hasGymSubscription() {
       let profile = get(/databases/$(database)/documents/users/$(request.auth.uid));
       return isSignedIn()
@@ -20,7 +32,38 @@ service cloud.firestore {
     }
 
     function validUserDoc(data) {
-      return data.name is string
+      return hasOnlyFields(data, [
+          "name",
+          "email",
+          "goal",
+          "weightUnit",
+          "measureUnit",
+          "accent",
+          "goalWeight",
+          "age",
+          "height",
+          "showCalories",
+          "subscriptionPlan",
+          "subscriptionStatus",
+          "subscriptionEndDate",
+          "subscriptionExpiresAt",
+          "subscriptionActivatedAt",
+          "subscriptionPaymentId",
+          "subscriptionOrderId",
+          "createdAt"
+        ])
+        && hasRequiredFields(data, [
+          "name",
+          "email",
+          "goal",
+          "weightUnit",
+          "measureUnit",
+          "accent",
+          "goalWeight",
+          "age",
+          "height"
+        ])
+        && data.name is string
         && data.email is string
         && data.goal is string
         && data.weightUnit is string
@@ -29,46 +72,87 @@ service cloud.firestore {
         && data.goalWeight is string
         && data.age is string
         && data.height is string
+        && (!("showCalories" in data) || data.showCalories is bool)
         && (!("subscriptionPlan" in data) || data.subscriptionPlan in ["none", "monthly", "yearly"])
+        && (!("subscriptionStatus" in data) || data.subscriptionStatus is string)
         && (!("subscriptionEndDate" in data) || data.subscriptionEndDate is string)
-        && (!("subscriptionExpiresAt" in data) || data.subscriptionExpiresAt is timestamp || data.subscriptionExpiresAt == null);
+        && (!("subscriptionExpiresAt" in data) || data.subscriptionExpiresAt is timestamp || data.subscriptionExpiresAt == null)
+        && (!("subscriptionActivatedAt" in data) || data.subscriptionActivatedAt is timestamp || data.subscriptionActivatedAt == null)
+        && (!("subscriptionPaymentId" in data) || data.subscriptionPaymentId is string)
+        && (!("subscriptionOrderId" in data) || data.subscriptionOrderId is string)
+        && (!("createdAt" in data) || data.createdAt is timestamp);
     }
 
     function validWeightDoc(data) {
-      return data.uid is string
+      return hasOnlyFields(data, ["uid", "weight", "date", "note", "createdAt"])
+        && hasRequiredFields(data, ["uid", "weight", "date"])
+        && data.uid is string
         && data.weight is number
+        && data.weight > 0
         && data.date is string
-        && (!("note" in data) || data.note is string);
+        && (!("note" in data) || data.note is string)
+        && (!("createdAt" in data) || data.createdAt is timestamp);
     }
 
-    function validMeasurementDoc(data) {
-      return data.uid is string
-        && data.part is string
-        && data.val is number
-        && data.date is string;
-    }
-
-    function validUserDailyMeasurementDoc(data) {
-      return data.date is timestamp
+    function validUserDailyMeasurementDoc(data, dateKey) {
+      return hasOnlyFields(data, [
+          "dateKey",
+          "date",
+          "waist",
+          "chest",
+          "hips",
+          "thigh",
+          "arms",
+          "notes",
+          "updatedAt"
+        ])
+        && hasRequiredFields(data, ["dateKey", "date", "waist", "chest", "hips", "thigh", "arms"])
         && data.dateKey is string
+        && data.dateKey == dateKey
+        && data.date is timestamp
         && data.waist is number
+        && data.waist >= 0
         && data.chest is number
+        && data.chest >= 0
         && data.hips is number
+        && data.hips >= 0
         && data.thigh is number
+        && data.thigh >= 0
         && data.arms is number
-        && (!("notes" in data) || data.notes is string);
+        && data.arms >= 0
+        && (!("notes" in data) || data.notes is string)
+        && (!("updatedAt" in data) || data.updatedAt is timestamp);
     }
 
     function validWorkoutDoc(data) {
-      return data.uid is string
+      return hasOnlyFields(data, [
+          "uid",
+          "exercise",
+          "sets",
+          "reps",
+          "weight",
+          "muscle",
+          "rpe",
+          "date",
+          "note",
+          "createdAt"
+        ])
+        && hasRequiredFields(data, ["uid", "exercise", "sets", "reps", "weight", "muscle", "rpe", "date"])
+        && data.uid is string
         && data.exercise is string
         && data.sets is number
+        && data.sets > 0
         && data.reps is number
+        && data.reps > 0
         && data.weight is number
+        && data.weight >= 0
         && data.muscle is string
         && data.rpe is number
+        && data.rpe >= 0
+        && data.rpe <= 10
         && data.date is string
-        && (!("note" in data) || data.note is string);
+        && (!("note" in data) || data.note is string)
+        && (!("createdAt" in data) || data.createdAt is timestamp);
     }
 
     match /users/{uid} {
@@ -78,47 +162,35 @@ service cloud.firestore {
 
       match /measurements/{dateKey} {
         allow read: if isOwner(uid);
-        allow create, update: if isOwner(uid) && validUserDailyMeasurementDoc(request.resource.data);
+        allow create, update: if isOwner(uid) && validUserDailyMeasurementDoc(request.resource.data, dateKey);
         allow delete: if isOwner(uid);
       }
     }
 
     match /weights/{docId} {
-      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow read: if isSignedIn() && isOwnUid(resource.data.uid);
       allow create: if isSignedIn()
-        && request.resource.data.uid == request.auth.uid
+        && isOwnUid(request.resource.data.uid)
         && validWeightDoc(request.resource.data);
       allow update: if isSignedIn()
-        && resource.data.uid == request.auth.uid
-        && request.resource.data.uid == request.auth.uid
+        && isOwnUid(resource.data.uid)
+        && isOwnUid(request.resource.data.uid)
         && validWeightDoc(request.resource.data);
-      allow delete: if isSignedIn() && resource.data.uid == request.auth.uid;
-    }
-
-    match /measurements/{docId} {
-      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
-      allow create: if isSignedIn()
-        && request.resource.data.uid == request.auth.uid
-        && validMeasurementDoc(request.resource.data);
-      allow update: if isSignedIn()
-        && resource.data.uid == request.auth.uid
-        && request.resource.data.uid == request.auth.uid
-        && validMeasurementDoc(request.resource.data);
-      allow delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow delete: if isSignedIn() && isOwnUid(resource.data.uid);
     }
 
     match /workouts/{docId} {
-      allow read: if isSignedIn() && hasGymSubscription() && resource.data.uid == request.auth.uid;
+      allow read: if isSignedIn() && hasGymSubscription() && isOwnUid(resource.data.uid);
       allow create: if isSignedIn()
         && hasGymSubscription()
-        && request.resource.data.uid == request.auth.uid
+        && isOwnUid(request.resource.data.uid)
         && validWorkoutDoc(request.resource.data);
       allow update: if isSignedIn()
         && hasGymSubscription()
-        && resource.data.uid == request.auth.uid
-        && request.resource.data.uid == request.auth.uid
+        && isOwnUid(resource.data.uid)
+        && isOwnUid(request.resource.data.uid)
         && validWorkoutDoc(request.resource.data);
-      allow delete: if isSignedIn() && hasGymSubscription() && resource.data.uid == request.auth.uid;
+      allow delete: if isSignedIn() && hasGymSubscription() && isOwnUid(resource.data.uid);
     }
   }
 }

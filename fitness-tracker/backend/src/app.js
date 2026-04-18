@@ -5,6 +5,7 @@ import compression from "compression";
 import morgan from "morgan";
 import healthRouter from "./routes/health.js";
 import paymentsRouter from "./routes/payments.js";
+import workoutsRouter from "./routes/workouts.js";
 
 const app = express();
 const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173")
@@ -31,7 +32,15 @@ app.use(
 app.use(helmet());
 app.use(compression());
 app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
-app.use(express.json());
+app.use(
+  express.json({
+    verify(req, res, buf) {
+      if (req.originalUrl === "/api/payments/webhook") {
+        req.rawBody = Buffer.from(buf);
+      }
+    },
+  })
+);
 
 app.get("/", (req, res) => {
   res.json({
@@ -44,6 +53,7 @@ app.get("/", (req, res) => {
 
 app.use("/api/health", healthRouter);
 app.use("/api/payments", paymentsRouter);
+app.use("/api/workouts", workoutsRouter);
 
 app.use((req, res) => {
   res.status(404).json({
