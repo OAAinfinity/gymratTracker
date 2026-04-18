@@ -8,10 +8,21 @@ import paymentsRouter from "./routes/payments.js";
 import workoutsRouter from "./routes/workouts.js";
 
 const app = express();
-const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173")
+const configuredOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
+
+const deploymentOrigins = [];
+if (process.env.VERCEL_URL) {
+  deploymentOrigins.push(`https://${process.env.VERCEL_URL}`);
+}
+if (process.env.FIREBASE_PROJECT_ID) {
+  deploymentOrigins.push(`https://${process.env.FIREBASE_PROJECT_ID}.web.app`);
+  deploymentOrigins.push(`https://${process.env.FIREBASE_PROJECT_ID}.firebaseapp.com`);
+}
+
+const allowedOrigins = [...new Set([...configuredOrigins, ...deploymentOrigins])];
 
 app.set("trust proxy", 1);
 
