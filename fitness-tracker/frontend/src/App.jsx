@@ -169,6 +169,36 @@ function useUserDoc(uid) {
   const [loading, setLd]      = useState(true);
   const { firebase }          = useAuth();
 
+  const toPersistedUserDoc = useCallback((data) => {
+    if (!data || typeof data !== "object") return {};
+
+    const allowed = [
+      "name",
+      "email",
+      "goal",
+      "weightUnit",
+      "measureUnit",
+      "accent",
+      "goalWeight",
+      "age",
+      "height",
+      "showCalories",
+      "subscriptionPlan",
+      "subscriptionStatus",
+      "subscriptionEndDate",
+      "subscriptionExpiresAt",
+      "subscriptionActivatedAt",
+      "subscriptionPaymentId",
+      "subscriptionOrderId",
+      "createdAt",
+    ];
+
+    return allowed.reduce((acc, key) => {
+      if (key in data) acc[key] = data[key];
+      return acc;
+    }, {});
+  }, []);
+
   useEffect(() => {
     if (!firebase || !uid) { setLd(false); return; }
     const { db, doc, onSnapshot } = firebase;
@@ -180,8 +210,8 @@ function useUserDoc(uid) {
 
   const save = useCallback(async (data) => {
     if (!firebase || !uid) return;
-    await firebase.setDoc(firebase.doc(firebase.db, "users", uid), data, { merge: true });
-  }, [firebase, uid]);
+    await firebase.setDoc(firebase.doc(firebase.db, "users", uid), toPersistedUserDoc(data), { merge: true });
+  }, [firebase, uid, toPersistedUserDoc]);
 
   return { profile, loading, save };
 }
@@ -482,7 +512,8 @@ function Dashboard({ settings }) {
   const { user } = useAuth();
   const { data: weights,  loading: wL  } = useCollection("weights",      user?.uid);
   const { entries: nestedMeasures, loading: mL } = useUserMeasurements(user?.uid);
-  const { data: workouts, loading: woL } = useCollection("workouts",      user?.uid);
+  const subActive = isGymSubscriptionActive(settings);
+  const { data: workouts, loading: woL } = useCollection("workouts", subActive ? user?.uid : null);
 
   const measures = useMemo(
     () =>
